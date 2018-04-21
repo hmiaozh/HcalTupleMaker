@@ -8,6 +8,14 @@
 #include "FWCore/Framework/interface/Event.h"
 #include "DataFormats/HcalDigi/interface/HcalDigiCollections.h"
 
+#include "CalibFormats/HcalObjects/interface/HcalDbService.h"
+#include "CalibFormats/HcalObjects/interface/HcalDbRecord.h"
+#include "CalibFormats/HcalObjects/interface/HcalCoderDb.h"
+
+#include "DataFormats/HcalDetId/interface/HcalSubdetector.h"
+#include "DataFormats/HcalDetId/interface/HcalDetId.h"
+#include "DataFormats/HcalDetId/interface/HcalGenericDetId.h"
+
 // NEEDS UPDATING
 double adc2fC_QIE11[256]={
   // - - - - - - - range 0 - - - - - - - -
@@ -96,6 +104,7 @@ HcalTupleMaker_QIE11Digis::HcalTupleMaker_QIE11Digis(const edm::ParameterSet& iC
   produces<std::vector<std::vector<int>   > >    ( "QIE11DigiTDC"        );
   produces<std::vector<std::vector<int>   > >    ( "QIE11DigiCapID"      );
   produces <int>                                 ( "laserType"           );
+  produces <int>                                 ( "QIE11Phase"          ); //for phase scan
 }
 
 void HcalTupleMaker_QIE11Digis::produce(edm::Event& iEvent, const edm::EventSetup& iSetup) {
@@ -116,6 +125,9 @@ void HcalTupleMaker_QIE11Digis::produce(edm::Event& iEvent, const edm::EventSetu
   std::unique_ptr<std::vector<std::vector<int  > > >    capid   ( new std::vector<std::vector<int  > >    ());
   
   bool use_event = true;
+
+  edm::ESHandle<HcalDbService> conditions;
+  iSetup.get<HcalDbRecord>().get(conditions);
   
   edm::Handle<HcalDataFrameContainer<QIE11DataFrame> >  qie11Digis;
   bool gotqie11digis = iEvent.getByToken(qie11digisToken_, qie11Digis);
@@ -128,7 +140,7 @@ void HcalTupleMaker_QIE11Digis::produce(edm::Event& iEvent, const edm::EventSetu
   if (use_event) {
     if (storelaser) {
       edm::Handle<HcalUMNioDigi> cumnio;
-      std::cout << "Only using laser events" << std::endl;
+//for phase scan      std::cout << "Only using laser events" << std::endl;
       bool gotuMNio = iEvent.getByToken(_tokuMNio,cumnio);                           
       if (!gotuMNio ) {
 	std::cout << "Could not find uMNio " << _taguMNio << std::endl;
@@ -137,10 +149,14 @@ void HcalTupleMaker_QIE11Digis::produce(edm::Event& iEvent, const edm::EventSetu
       std::unique_ptr<int> lasertype (new int(cumnio -> valueUserWord(0)));
       iEvent.put(move( lasertype )         , "laserType"      );
       //std::cout << "Laser type is " << lasertype << std::endl;
+      std::unique_ptr<int> phase (new int(cumnio -> valueUserWord(1))); // for phase scan
+      iEvent.put(move( phase )         , "QIE11Phase"      ); //for phase scan
     }
     else {
       std::unique_ptr<int> lasertype (new int());
       iEvent.put(move( lasertype )         , "laserType"      );
+      std::unique_ptr<int> phase (new int());  //for phase scan
+      iEvent.put(move( phase )         , "QIE11Phse"      );  //for phase scan
     }
     
     for (uint32_t i=0; i<qie11Digis->size(); i++) {
@@ -151,7 +167,12 @@ void HcalTupleMaker_QIE11Digis::produce(edm::Event& iEvent, const edm::EventSetu
       // Extract info on detector location
       DetId detid = qie11df.detid();
       HcalDetId hcaldetid = HcalDetId(detid);
-      
+
+      const HcalQIECoder* channelCoder = conditions -> getHcalCoder(hcaldetid);
+      const HcalQIEShape* shape = conditions -> getHcalShape(channelCoder);
+      HcalCoderDb coder(*channelCoder,*shape);
+      CaloSamples cs; coder.adc2fC(qie11df,cs);
+    
       ieta    -> push_back ( hcaldetid.ieta()        );
       iphi    -> push_back ( hcaldetid.iphi()        );
       subdet  -> push_back ( 8/*hcaldetid.subdet()*/ );
@@ -181,7 +202,8 @@ void HcalTupleMaker_QIE11Digis::produce(edm::Event& iEvent, const edm::EventSetu
       for (int its=0; its<nTS; ++its) {
 	(*soi  )[last_entry].push_back ( qie11df[its].soi()               ); // soi is a bool, but stored as an int
 	(*adc  )[last_entry].push_back ( qie11df[its].adc()               );
-	(*fc   )[last_entry].push_back ( adc2fC_QIE11[qie11df[its].adc()] );
+	(*fc   )[last_entry].push_back ( cs[its] );
+	//(*fc   )[last_entry].push_back ( adc2fC_QIE11[qie11df[its].adc()] );
 	(*tdc  )[last_entry].push_back ( qie11df[its].tdc()               );
 	(*capid)[last_entry].push_back ( qie11df[its].capid()             );	
       }
